@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>¡BASTA! - Survival Edition</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: -apple-system, sans-serif; background: #121212; color: #fff; min-height: 100vh; display: flex; justify-content: center; padding: 15px; }
+        .container { width: 100%; max-width: 450px; }
+        .card { background: #1e1e1e; border-radius: 24px; padding: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .game-header { text-align: center; margin-bottom: 20px; }
+        .category-tag { display: inline-block; background: #3b82f6; color: white; padding: 6px 16px; border-radius: 50px; font-size: 0.8rem; font-weight: 700; text-transform: uppercase; margin-bottom: 10px; }
+        .timer-big { font-size: 5rem; font-weight: 800; line-height: 1; margin: 10px 0; }
+        .timer-big.low { color: #ef4444; animation: pulse 0.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .letters-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 25px; }
+        .letter-btn { aspect-ratio: 1; border: none; border-radius: 12px; background: #2d2d2d; color: #fff; font-size: 1.5rem; font-weight: 600; cursor: pointer; }
+        .letter-btn.used { background: #1a1a1a; color: #444; transform: scale(0.9); cursor: not-allowed; }
+        .input-text { width: 100%; padding: 14px; background: #2d2d2d; border: 1px solid #3d3d3d; border-radius: 12px; color: white; }
+        .mode-selector { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 15px 0; }
+        .mode-btn { padding: 12px; background: #2d2d2d; border: 2px solid transparent; border-radius: 12px; color: #888; cursor: pointer; font-weight: 600; font-size: 0.75rem; }
+        .mode-btn.active { border-color: #3b82f6; color: white; background: #1e3a8a; }
+        .btn-main { width: 100%; padding: 18px; background: #3b82f6; color: white; border: none; border-radius: 16px; font-weight: 700; font-size: 1rem; cursor: pointer; margin-top: 10px; }
+        .btn-main:disabled { background: #333; color: #666; cursor: not-allowed; }
+        .chip { display: inline-flex; background: #2d2d2d; padding: 5px 12px; border-radius: 20px; margin: 4px; font-size: 0.8rem; border: 1px solid #333; }
+        .chip.active { background: #3b82f6; border-color: #3b82f6; }
+        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 100; }
+        .modal-content { background: #1e1e1e; padding: 30px; border-radius: 24px; text-align: center; width: 100%; max-width: 350px; }
+        select { width: 100%; padding: 12px; background: #2d2d2d; border: 1px solid #3d3d3d; border-radius: 12px; color: white; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        const CATEGORIES = ["Frutas", "Países", "Animales", "Marcas", "Colores", "Nombres", "Películas", "Objetos", "Comida", "Deportes", "Profesiones", "Ropa", "Famosos"];
+
+        const useAudio = () => {
+            const ctx = useRef(null);
+            const init = () => { if (!ctx.current) ctx.current = new (window.AudioContext || window.webkitAudioContext)(); };
+            const beep = (f, d, vol = 0.1) => {
+                init();
+                if (ctx.current.state === 'suspended') ctx.current.resume();
+                const o = ctx.current.createOscillator();
+                const g = ctx.current.createGain();
+                o.frequency.value = f;
+                g.gain.setValueAtTime(vol, ctx.current.currentTime);
+                g.gain.exponentialRampToValueAtTime(0.01, ctx.current.currentTime + d);
+                o.connect(g); g.connect(ctx.current.destination);
+                o.start(); o.stop(ctx.current.currentTime + d);
+            };
+            return { tick: (m) => beep(m === 'nuclear' ? 250 : 400, 0.1), boom: () => beep(80, 1.5, 0.4), click: () => beep(800, 0.1), init };
+        };
+
+        function App() {
+            const audio = useAudio();
+            const [gameState, setGameState] = useState('setup');
+            const [players, setPlayers] = useState([]);
+            const [newPlayer, setNewPlayer] = useState('');
+            const [time, setTime] = useState(10);
+            const [mode, setMode] = useState('category');
+            const [sound, setSound] = useState('clasico');
+            const [currentIdx, setCurrentIdx] = useState(0);
+            const [timeLeft, setTimeLeft] = useState(0);
+            const [running, setRunning] = useState(false);
+            const [used, setUsed] = useState([]);
+            const [cat, setCat] = useState('');
+            const [loser, setLoser] = useState('');
+
+            const handleAddPlayer = () => {
+                if (newPlayer.trim()) {
+                    setPlayers([...players, { name: newPlayer.trim() }]);
+                    setNewPlayer('');
+                }
+            };
+
+            useEffect(() => {
+                let timer;
+                if (running && timeLeft > 0) {
+                    timer = setInterval(() => {
+                        setTimeLeft(t => t - 1);
+                        audio.tick(sound);
+                        if (timeLeft <= 4 && navigator.vibrate) navigator.vibrate(50);
+                    }, 1000);
+                } else if (running && timeLeft === 0) {
+                    setRunning(false);
+                    audio.boom();
+                    setLoser(players[currentIdx]?.name || "");
+                    const newP = players.filter((_, i) => i !== currentIdx);
+                    setPlayers(newP);
+                    setGameState(newP.length <= 1 ? 'win' : 'lose');
+                }
+                return () => clearInterval(timer);
+            }, [running, timeLeft, players, currentIdx, audio, sound]);
+
+            const start = () => {
+                if (players.length < 2) return;
+                audio.init();
+                setUsed([]);
+                setCurrentIdx(0);
+                setTimeLeft(time);
+                // Categoría fija al iniciar
+                if (mode === 'category') {
+                    setCat(CATEGORIES[Math.floor(Math.random() * CATEGORIES.length)]);
+                }
+                setGameState('play');
+                setRunning(true);
+            };
+
+            const select = (l) => {
+                if (used.includes(l) || !running) return;
+                audio.click();
+                setUsed([...used, l]);
+                const next = (currentIdx + 1) % players.length;
+                setCurrentIdx(next);
+                setTimeLeft(time);
+                // Ya no cambia la categoría aquí para mantenerla toda la ronda
+            };
+
+            if (gameState === 'setup') {
+                return (
+                    <div className="container">
+                        <div className="card">
+                            <h2 style={{textAlign:'center', marginBottom:20}}>Configuración</h2>
+                            <div style={{display:'flex', gap:8, marginBottom:15}}>
+                                <input className="input-text" type="text" value={newPlayer} 
+                                    onChange={e=>setNewPlayer(e.target.value)} 
+                                    onKeyDown={e=>e.key==='Enter' && handleAddPlayer()} 
+                                    placeholder="Nombre del jugador" />
+                                <button onClick={handleAddPlayer} className="btn-main" style={{marginTop:0, width:60, padding:12}}>+</button>
+                            </div>
+                            <div style={{marginBottom:15, minHeight:30}}>{players.map((p,i)=><span key={i} className="chip">{p.name}</span>)}</div>
+                            
+                            <p style={{fontSize:'0.8rem', color:'#888'}}>Tiempo: {time}s</p>
+                            <input type="range" min="5" max="20" value={time} onChange={e=>setTime(Number(e.target.value))} style={{width:'100%', accentColor:'#3b82f6', marginBottom:20}} />
+                            
+                            <p style={{fontSize:'0.8rem', color:'#888'}}>Modo:</p>
+                            <div className="mode-selector">
+                                <button className={`mode-btn ${mode==='category'?'active':''}`} onClick={()=>setMode('category')}>CON CATEGORÍA</button>
+                                <button className={`mode-btn ${mode==='free'?'active':''}`} onClick={()=>setMode('free')}>SIN CATEGORÍA</button>
+                            </div>
+
+                            <p style={{fontSize:'0.8rem', color:'#888'}}>Alarma:</p>
+                            <select value={sound} onChange={e=>setSound(e.target.value)}>
+                                <option value="clasico">Bomba Clásica</option>
+                                <option value="nuclear">Alarma Nuclear</option>
+                            </select>
+                            
+                            <button className="btn-main" onClick={start} disabled={players.length < 2}>INICIAR JUEGO</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="container">
+                    {(gameState === 'lose' || gameState === 'win') && (
+                        <div className="modal"><div className="modal-content">
+                            <h2 style={{color: gameState==='lose'?'#ef4444':'#3b82f6', marginBottom:10}}>{gameState==='lose'?'¡BOOM!':'¡VICTORIA!'}</h2>
+                            <p>{gameState==='lose' ? <span><strong>{loser}</strong> eliminado.</span> : <span><strong>{players[0]?.name}</strong> es el ganador.</span>}</p>
+                            <button className="btn-main" onClick={()=>{ if(gameState==='win') window.location.reload(); else {setGameState('play'); setTimeLeft(time); setRunning(true);}}}>
+                                {gameState==='win'?'NUEVA PARTIDA':'SIGUIENTE'}
+                            </button>
+                        </div></div>
+                    )}
+
+                    <div className="card">
+                        <div className="game-header">
+                            {mode==='category' && <div className="category-tag">TEMA: {cat}</div>}
+                            <h2 style={{margin:'5px 0'}}>{players[currentIdx]?.name}</h2>
+                            <div className={`timer-big ${timeLeft <= 3 ? 'low' : ''}`}>{timeLeft}</div>
+                        </div>
+                        <div className="letters-grid">
+                            {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('').map(l => (
+                                <button key={l} disabled={used.includes(l) || !running} onClick={()=>select(l)} className={`letter-btn ${used.includes(l) ? 'used' : ''}`}>{l}</button>
+                            ))}
+                        </div>
+                        <div style={{textAlign:'center'}}>{players.map((p,i)=><span key={i} className={`chip ${i===currentIdx?'active':''}`}>{p.name}</span>)}</div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+    <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js');
+  }
+</script>
+</body>
+</html>
